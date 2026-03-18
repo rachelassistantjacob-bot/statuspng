@@ -4,8 +4,5 @@
       "path": "/api/check",
       "schedule": "*/5 * * * *"
     }
-  ],
-  "env": {
-    "CRON_SECRET": "@cron_secret"
-  }
+  ]
 }
