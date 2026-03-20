@@ -6,6 +6,7 @@ export async function GET() {
     const monitors = await getAllMonitors();
     return NextResponse.json(monitors);
   } catch (e) {
+    console.error('Failed to get monitors:', e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
     const monitor = await createMonitor({ name, url, email, interval_minutes });
     return NextResponse.json(monitor, { status: 201 });
   } catch (e) {
+    console.error('Failed to create monitor:', e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }
@@ -38,6 +40,7 @@ export async function DELETE(req: NextRequest) {
     await deleteMonitor(id);
     return NextResponse.json({ ok: true });
   } catch (e) {
+    console.error('Failed to delete monitor:', e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }

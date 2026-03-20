@@ -8,7 +8,7 @@ interface Monitor {
   url: string;
   email: string;
   interval_minutes: number;
-  is_up: number;
+  is_up: boolean;
   last_checked_at: number | null;
   created_at: number;
 }
@@ -149,7 +149,7 @@ export default function DashboardPage() {
               <div key={m.id} className="bg-white/3 border border-white/8 rounded-xl p-5 hover:border-white/15 transition-colors">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className={`w-3 h-3 rounded-full flex-shrink-0 ${m.is_up ? 'bg-emerald-500' : 'bg-red-500'} ${m.is_up ? 'animate-pulse' : ''}`} />
+                    <div className={`w-3 h-3 rounded-full flex-shrink-0 ${m.is_up === true ? 'bg-emerald-500' : 'bg-red-500'} ${m.is_up ? 'animate-pulse' : ''}`} />
                     <div className="min-w-0">
                       <div className="font-semibold text-sm">{m.name}</div>
                       <div className="text-xs text-gray-500 truncate">{m.url}</div>
@@ -157,9 +157,9 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      m.is_up ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                      m.is_up === true ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
                     }`}>
-                      {m.is_up ? 'UP' : 'DOWN'}
+                      {m.is_up === true ? 'UP' : 'DOWN'}
                     </span>
                     <button
                       onClick={() => handleCheck(m.id)}

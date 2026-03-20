@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { isUp, responseTimeMs, statusCode } = await checkUrl(monitor.url);
-    const wasUp = Boolean(monitor.is_up);
+    const wasUp = monitor.is_up;
 
     await recordCheck(monitor.id, isUp, responseTimeMs, statusCode);
     await updateMonitorStatus(monitor.id, isUp);
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
   if (!monitor) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const { isUp, responseTimeMs, statusCode } = await checkUrl(monitor.url);
-  const wasUp = Boolean(monitor.is_up);
+  const wasUp = monitor.is_up;
   await recordCheck(id, isUp, responseTimeMs, statusCode);
   await updateMonitorStatus(id, isUp);
 

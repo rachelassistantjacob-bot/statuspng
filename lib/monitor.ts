@@ -21,101 +21,75 @@ export interface Check {
   checked_at: number;
 }
 
-let schemaReady = false;
-
-async function ensureSchema() {
-  if (schemaReady) return;
-  await initSchema();
-  schemaReady = true;
-}
-
-export async function createMonitor(data: {
-  name: string;
-  url: string;
-  email: string;
-  interval_minutes?: number;
-}): Promise<Monitor> {
-  await ensureSchema();
+export async function createMonitor(data: { name: string; url: string; email: string; interval_minutes?: number }): Promise<Monitor> {
   const id = nanoid(10);
-  await sql(
-    `INSERT INTO monitors (id, name, url, email, interval_minutes)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [id, data.name, data.url, data.email, data.interval_minutes ?? 5],
-  );
-  return (await getMonitor(id))!;
+  await sql`
+    INSERT INTO monitors (id, name, url, email, interval_minutes)
+    VALUES (${id}, ${data.name}, ${data.url}, ${data.email}, ${data.interval_minutes ?? 5})
+  `;
+  const monitor = await getMonitor(id);
+  if (!monitor) throw new Error('Failed to create monitor');
+  return monitor;
 }
 
 export async function getMonitor(id: string): Promise<Monitor | undefined> {
-  await ensureSchema();
-  const rows = await sql('SELECT * FROM monitors WHERE id = $1', [id]);
-  return rows[0] as unknown as Monitor | undefined;
+  const rows = await sql`SELECT * FROM monitors WHERE id = ${id}`;
+  const row = rows[0];
+  if (!row) return undefined;
+  return rowToMonitor(row);
 }
 
 export async function getAllMonitors(): Promise<Monitor[]> {
-  await ensureSchema();
-  const rows = await sql('SELECT * FROM monitors ORDER BY created_at DESC');
-  return rows as unknown as Monitor[];
+  const rows = await sql`SELECT * FROM monitors ORDER BY created_at DESC`;
+  return rows.map(rowToMonitor);
 }
 
 export async function updateMonitorStatus(id: string, isUp: boolean) {
-  await ensureSchema();
-  await sql(
-    `UPDATE monitors SET is_up = $1, last_checked_at = EXTRACT(EPOCH FROM NOW())::BIGINT WHERE id = $2`,
-    [isUp, id],
-  );
+  await sql`
+    UPDATE monitors 
+    SET is_up = ${isUp}, last_checked_at = NOW() 
+    WHERE id = ${id}
+  `;
 }
 
-export async function recordCheck(
-  monitorId: string,
-  isUp: boolean,
-  responseTimeMs: number | null,
-  statusCode: number | null,
-) {
-  await ensureSchema();
-  await sql(
-    `INSERT INTO checks (monitor_id, is_up, response_time_ms, status_code)
-     VALUES ($1, $2, $3, $4)`,
-    [monitorId, isUp, responseTimeMs, statusCode],
-  );
+export async function recordCheck(monitorId: string, isUp: boolean, responseTimeMs: number | null, statusCode: number | null) {
+  await sql`
+    INSERT INTO checks (monitor_id, is_up, response_time_ms, status_code)
+    VALUES (${monitorId}, ${isUp}, ${responseTimeMs}, ${statusCode})
+  `;
 }
 
 export async function getRecentChecks(monitorId: string, limit = 100): Promise<Check[]> {
-  await ensureSchema();
-  const rows = await sql(
-    `SELECT * FROM checks WHERE monitor_id = $1 ORDER BY checked_at DESC LIMIT $2`,
-    [monitorId, limit],
-  );
-  return rows as unknown as Check[];
+  const rows = await sql`
+    SELECT * FROM checks 
+    WHERE monitor_id = ${monitorId} 
+    ORDER BY checked_at DESC 
+    LIMIT ${limit}
+  `;
+  return rows.map(rowToCheck);
 }
 
-export async function getUptimeDots(
-  monitorId: string,
-  days = 30,
-): Promise<('up' | 'down' | 'nodata')[]> {
-  await ensureSchema();
-  const now = Math.floor(Date.now() / 1000);
-  const since = now - days * 86400;
-
-  // Fetch all checks for the period in one query
-  const rows = await sql(
-    `SELECT is_up, checked_at FROM checks
-     WHERE monitor_id = $1 AND checked_at >= $2
-     ORDER BY checked_at`,
-    [monitorId, since],
-  );
-
+export async function getUptimeDots(monitorId: string, days = 30): Promise<('up' | 'down' | 'nodata')[]> {
   const dots: ('up' | 'down' | 'nodata')[] = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const dayStart = now - (i + 1) * 86400;
-    const dayEnd = now - i * 86400;
-    const dayChecks = rows.filter(
-      (r: any) => Number(r.checked_at) >= dayStart && Number(r.checked_at) < dayEnd,
-    );
+  const now = new Date();
 
-    if (dayChecks.length === 0) {
+  for (let i = days - 1; i >= 0; i--) {
+    const dayStart = new Date(now);
+    dayStart.setDate(dayStart.getDate() - (i + 1));
+    const dayEnd = new Date(now);
+    dayEnd.setDate(dayEnd.getDate() - i);
+
+    const rows = await sql`
+      SELECT is_up FROM checks
+      WHERE monitor_id = ${monitorId} 
+        AND checked_at >= ${dayStart} 
+        AND checked_at < ${dayEnd}
+    `;
+
+    if (rows.length === 0) {
       dots.push('nodata');
     } else {
-      const hasDown = dayChecks.some((r: any) => r.is_up === false);
+      const hasDown = rows.some(r => !r.is_up);
       dots.push(hasDown ? 'down' : 'up');
     }
   }
@@ -123,30 +97,64 @@ export async function getUptimeDots(
 }
 
 export async function getUptimePercent(monitorId: string, days = 30): Promise<number> {
-  await ensureSchema();
-  const since = Math.floor(Date.now() / 1000) - days * 86400;
-  const rows = await sql(
-    `SELECT is_up FROM checks WHERE monitor_id = $1 AND checked_at >= $2`,
-    [monitorId, since],
-  );
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const rows = await sql`
+    SELECT is_up FROM checks 
+    WHERE monitor_id = ${monitorId} 
+      AND checked_at >= ${since}
+  `;
+
   if (rows.length === 0) return 100;
-  const upCount = rows.filter((r: any) => r.is_up === true).length;
+  const upCount = rows.filter(r => r.is_up).length;
   return Math.round((upCount / rows.length) * 1000) / 10;
 }
 
 export async function getAvgResponseTime(monitorId: string, days = 7): Promise<number | null> {
-  await ensureSchema();
-  const since = Math.floor(Date.now() / 1000) - days * 86400;
-  const rows = await sql(
-    `SELECT AVG(response_time_ms) as avg FROM checks
-     WHERE monitor_id = $1 AND checked_at >= $2 AND response_time_ms IS NOT NULL`,
-    [monitorId, since],
-  );
-  const avg = (rows[0] as any)?.avg;
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const rows = await sql`
+    SELECT AVG(response_time_ms) as avg FROM checks
+    WHERE monitor_id = ${monitorId} 
+      AND checked_at >= ${since} 
+      AND response_time_ms IS NOT NULL
+  `;
+
+  const avg = rows[0]?.avg;
   return avg ? Math.round(Number(avg)) : null;
 }
 
 export async function deleteMonitor(id: string) {
-  await ensureSchema();
-  await sql('DELETE FROM monitors WHERE id = $1', [id]);
+  await sql`DELETE FROM monitors WHERE id = ${id}`;
+}
+
+function rowToMonitor(row: any): Monitor {
+  return {
+    id: row.id,
+    name: row.name,
+    url: row.url,
+    email: row.email,
+    interval_minutes: row.interval_minutes,
+    is_up: row.is_up,
+    last_checked_at: row.last_checked_at ? Math.floor(new Date(row.last_checked_at).getTime() / 1000) : null,
+    created_at: row.created_at ? Math.floor(new Date(row.created_at).getTime() / 1000) : 0,
+  };
+}
+
+function rowToCheck(row: any): Check {
+  return {
+    id: row.id,
+    monitor_id: row.monitor_id,
+    is_up: row.is_up,
+    response_time_ms: row.response_time_ms,
+    status_code: row.status_code,
+    checked_at: row.checked_at ? Math.floor(new Date(row.checked_at).getTime() / 1000) : 0,
+  };
+}
+
+// Initialize schema on module load (for serverless, this runs on cold start)
+if (process.env.NODE_ENV !== 'production') {
+  initSchema().catch(console.error);
 }
