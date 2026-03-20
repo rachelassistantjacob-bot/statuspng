@@ -1,4 +1,4 @@
-import { getDb } from './db';
+import { sql, initSchema } from './db';
 import { nanoid } from 'nanoid';
 
 export interface Monitor {
@@ -7,7 +7,7 @@ export interface Monitor {
   url: string;
   email: string;
   interval_minutes: number;
-  is_up: number;
+  is_up: boolean;
   last_checked_at: number | null;
   created_at: number;
 }
@@ -15,99 +15,138 @@ export interface Monitor {
 export interface Check {
   id: number;
   monitor_id: string;
-  is_up: number;
+  is_up: boolean;
   response_time_ms: number | null;
   status_code: number | null;
   checked_at: number;
 }
 
-export function createMonitor(data: { name: string; url: string; email: string; interval_minutes?: number }): Monitor {
-  const db = getDb();
+let schemaReady = false;
+
+async function ensureSchema() {
+  if (schemaReady) return;
+  await initSchema();
+  schemaReady = true;
+}
+
+export async function createMonitor(data: {
+  name: string;
+  url: string;
+  email: string;
+  interval_minutes?: number;
+}): Promise<Monitor> {
+  await ensureSchema();
   const id = nanoid(10);
-  const stmt = db.prepare(`
-    INSERT INTO monitors (id, name, url, email, interval_minutes)
-    VALUES (@id, @name, @url, @email, @interval_minutes)
-  `);
-  stmt.run({ id, name: data.name, url: data.url, email: data.email, interval_minutes: data.interval_minutes ?? 5 });
-  return getMonitor(id)!;
+  await sql(
+    `INSERT INTO monitors (id, name, url, email, interval_minutes)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [id, data.name, data.url, data.email, data.interval_minutes ?? 5],
+  );
+  return (await getMonitor(id))!;
 }
 
-export function getMonitor(id: string): Monitor | undefined {
-  const db = getDb();
-  return db.prepare('SELECT * FROM monitors WHERE id = ?').get(id) as Monitor | undefined;
+export async function getMonitor(id: string): Promise<Monitor | undefined> {
+  await ensureSchema();
+  const rows = await sql('SELECT * FROM monitors WHERE id = $1', [id]);
+  return rows[0] as unknown as Monitor | undefined;
 }
 
-export function getAllMonitors(): Monitor[] {
-  const db = getDb();
-  return db.prepare('SELECT * FROM monitors ORDER BY created_at DESC').all() as Monitor[];
+export async function getAllMonitors(): Promise<Monitor[]> {
+  await ensureSchema();
+  const rows = await sql('SELECT * FROM monitors ORDER BY created_at DESC');
+  return rows as unknown as Monitor[];
 }
 
-export function updateMonitorStatus(id: string, isUp: boolean) {
-  const db = getDb();
-  db.prepare('UPDATE monitors SET is_up = ?, last_checked_at = unixepoch() WHERE id = ?')
-    .run(isUp ? 1 : 0, id);
+export async function updateMonitorStatus(id: string, isUp: boolean) {
+  await ensureSchema();
+  await sql(
+    `UPDATE monitors SET is_up = $1, last_checked_at = EXTRACT(EPOCH FROM NOW())::BIGINT WHERE id = $2`,
+    [isUp, id],
+  );
 }
 
-export function recordCheck(monitorId: string, isUp: boolean, responseTimeMs: number | null, statusCode: number | null) {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO checks (monitor_id, is_up, response_time_ms, status_code)
-    VALUES (?, ?, ?, ?)
-  `).run(monitorId, isUp ? 1 : 0, responseTimeMs, statusCode);
+export async function recordCheck(
+  monitorId: string,
+  isUp: boolean,
+  responseTimeMs: number | null,
+  statusCode: number | null,
+) {
+  await ensureSchema();
+  await sql(
+    `INSERT INTO checks (monitor_id, is_up, response_time_ms, status_code)
+     VALUES ($1, $2, $3, $4)`,
+    [monitorId, isUp, responseTimeMs, statusCode],
+  );
 }
 
-export function getRecentChecks(monitorId: string, limit = 100): Check[] {
-  const db = getDb();
-  return db.prepare(`
-    SELECT * FROM checks WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT ?
-  `).all(monitorId, limit) as Check[];
+export async function getRecentChecks(monitorId: string, limit = 100): Promise<Check[]> {
+  await ensureSchema();
+  const rows = await sql(
+    `SELECT * FROM checks WHERE monitor_id = $1 ORDER BY checked_at DESC LIMIT $2`,
+    [monitorId, limit],
+  );
+  return rows as unknown as Check[];
 }
 
-export function getUptimeDots(monitorId: string, days = 30): ('up' | 'down' | 'nodata')[] {
-  const db = getDb();
+export async function getUptimeDots(
+  monitorId: string,
+  days = 30,
+): Promise<('up' | 'down' | 'nodata')[]> {
+  await ensureSchema();
   const now = Math.floor(Date.now() / 1000);
-  const dots: ('up' | 'down' | 'nodata')[] = [];
+  const since = now - days * 86400;
 
+  // Fetch all checks for the period in one query
+  const rows = await sql(
+    `SELECT is_up, checked_at FROM checks
+     WHERE monitor_id = $1 AND checked_at >= $2
+     ORDER BY checked_at`,
+    [monitorId, since],
+  );
+
+  const dots: ('up' | 'down' | 'nodata')[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const dayStart = now - (i + 1) * 86400;
     const dayEnd = now - i * 86400;
-    const rows = db.prepare(`
-      SELECT is_up FROM checks
-      WHERE monitor_id = ? AND checked_at >= ? AND checked_at < ?
-    `).all(monitorId, dayStart, dayEnd) as { is_up: number }[];
+    const dayChecks = rows.filter(
+      (r: any) => Number(r.checked_at) >= dayStart && Number(r.checked_at) < dayEnd,
+    );
 
-    if (rows.length === 0) {
+    if (dayChecks.length === 0) {
       dots.push('nodata');
     } else {
-      const hasDown = rows.some(r => r.is_up === 0);
+      const hasDown = dayChecks.some((r: any) => r.is_up === false);
       dots.push(hasDown ? 'down' : 'up');
     }
   }
   return dots;
 }
 
-export function getUptimePercent(monitorId: string, days = 30): number {
-  const db = getDb();
+export async function getUptimePercent(monitorId: string, days = 30): Promise<number> {
+  await ensureSchema();
   const since = Math.floor(Date.now() / 1000) - days * 86400;
-  const rows = db.prepare(`
-    SELECT is_up FROM checks WHERE monitor_id = ? AND checked_at >= ?
-  `).all(monitorId, since) as { is_up: number }[];
+  const rows = await sql(
+    `SELECT is_up FROM checks WHERE monitor_id = $1 AND checked_at >= $2`,
+    [monitorId, since],
+  );
   if (rows.length === 0) return 100;
-  const upCount = rows.filter(r => r.is_up === 1).length;
+  const upCount = rows.filter((r: any) => r.is_up === true).length;
   return Math.round((upCount / rows.length) * 1000) / 10;
 }
 
-export function getAvgResponseTime(monitorId: string, days = 7): number | null {
-  const db = getDb();
+export async function getAvgResponseTime(monitorId: string, days = 7): Promise<number | null> {
+  await ensureSchema();
   const since = Math.floor(Date.now() / 1000) - days * 86400;
-  const row = db.prepare(`
-    SELECT AVG(response_time_ms) as avg FROM checks
-    WHERE monitor_id = ? AND checked_at >= ? AND response_time_ms IS NOT NULL
-  `).get(monitorId, since) as { avg: number | null };
-  return row?.avg ? Math.round(row.avg) : null;
+  const rows = await sql(
+    `SELECT AVG(response_time_ms) as avg FROM checks
+     WHERE monitor_id = $1 AND checked_at >= $2 AND response_time_ms IS NOT NULL`,
+    [monitorId, since],
+  );
+  const avg = (rows[0] as any)?.avg;
+  return avg ? Math.round(Number(avg)) : null;
 }
 
-export function deleteMonitor(id: string) {
-  const db = getDb();
-  db.prepare('DELETE FROM monitors WHERE id = ?').run(id);
+export async function deleteMonitor(id: string) {
+  await ensureSchema();
+  await sql('DELETE FROM monitors WHERE id = $1', [id]);
 }

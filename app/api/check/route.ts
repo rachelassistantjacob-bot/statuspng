@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const monitors = getAllMonitors();
+  const monitors = await getAllMonitors();
   const now = Math.floor(Date.now() / 1000);
   const results = [];
 
@@ -44,10 +44,10 @@ export async function POST(req: NextRequest) {
     }
 
     const { isUp, responseTimeMs, statusCode } = await checkUrl(monitor.url);
-    const wasUp = monitor.is_up === 1;
+    const wasUp = Boolean(monitor.is_up);
 
-    recordCheck(monitor.id, isUp, responseTimeMs, statusCode);
-    updateMonitorStatus(monitor.id, isUp);
+    await recordCheck(monitor.id, isUp, responseTimeMs, statusCode);
+    await updateMonitorStatus(monitor.id, isUp);
 
     // Send alert if status changed
     if (wasUp !== isUp) {
@@ -74,13 +74,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'id required' }, { status: 400 });
   }
 
-  const monitor = getMonitor(id);
+  const monitor = await getMonitor(id);
   if (!monitor) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const { isUp, responseTimeMs, statusCode } = await checkUrl(monitor.url);
-  const wasUp = monitor.is_up === 1;
-  recordCheck(id, isUp, responseTimeMs, statusCode);
-  updateMonitorStatus(id, isUp);
+  const wasUp = Boolean(monitor.is_up);
+  await recordCheck(id, isUp, responseTimeMs, statusCode);
+  await updateMonitorStatus(id, isUp);
 
   if (wasUp !== isUp) {
     await sendAlert(monitor.email, monitor.name, monitor.url, isUp);

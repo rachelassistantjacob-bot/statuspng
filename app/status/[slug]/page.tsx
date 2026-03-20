@@ -5,15 +5,15 @@ export const dynamic = 'force-dynamic';
 
 export default async function StatusPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const monitor = getMonitor(slug);
+  const monitor = await getMonitor(slug);
   if (!monitor) notFound();
 
-  const dots = getUptimeDots(slug, 30);
-  const uptime = getUptimePercent(slug, 30);
-  const avgResponse = getAvgResponseTime(slug, 7);
-  const recentChecks = getRecentChecks(slug, 10);
+  const dots = await getUptimeDots(slug, 30);
+  const uptime = await getUptimePercent(slug, 30);
+  const avgResponse = await getAvgResponseTime(slug, 7);
+  const recentChecks = await getRecentChecks(slug, 10);
 
-  const isUp = monitor.is_up === 1;
+  const isUp = Boolean(monitor.is_up);
 
   return (
     <main className="min-h-screen bg-[#0a0a0f] text-gray-100 p-6">

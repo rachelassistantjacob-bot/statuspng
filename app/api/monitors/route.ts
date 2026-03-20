@@ -3,7 +3,7 @@ import { createMonitor, getAllMonitors, deleteMonitor } from '@/lib/monitor';
 
 export async function GET() {
   try {
-    const monitors = getAllMonitors();
+    const monitors = await getAllMonitors();
     return NextResponse.json(monitors);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
     }
 
-    const monitor = createMonitor({ name, url, email, interval_minutes });
+    const monitor = await createMonitor({ name, url, email, interval_minutes });
     return NextResponse.json(monitor, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
@@ -35,7 +35,7 @@ export async function DELETE(req: NextRequest) {
   try {
     const { id } = await req.json();
     if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
-    deleteMonitor(id);
+    await deleteMonitor(id);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });

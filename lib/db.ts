@@ -1,51 +1,66 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { Pool } from '@neondatabase/serverless';
 
-const DB_DIR = process.env.DB_DIR || '/tmp/statuspng';
-const DB_PATH = path.join(DB_DIR, 'statuspng.db');
+export type SqlRow = Record<string, unknown>;
 
-let db: Database.Database;
+const DATABASE_URL = process.env.DATABASE_URL;
 
-export function getDb(): Database.Database {
-  if (!db) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    initSchema(db);
-  }
-  return db;
+if (!DATABASE_URL && process.env.NODE_ENV !== 'production') {
+  console.warn('[db] DATABASE_URL is not set — queries will fail at runtime');
 }
 
-function initSchema(db: Database.Database) {
-  db.exec(`
+function getPool(): Pool {
+  if (!DATABASE_URL) {
+    throw new Error('DATABASE_URL environment variable is not set');
+  }
+  return new Pool({ connectionString: DATABASE_URL });
+}
+
+export async function sql(query: string, params: unknown[] = []): Promise<SqlRow[]> {
+  const pool = getPool();
+  try {
+    const result = await pool.query(query, params);
+    return result.rows as SqlRow[];
+  } finally {
+    // Neon serverless pool doesn't need explicit end() per request
+  }
+}
+
+export async function initSchema(): Promise<void> {
+  await sql(`
     CREATE TABLE IF NOT EXISTS monitors (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       url TEXT NOT NULL,
       email TEXT NOT NULL,
       interval_minutes INTEGER NOT NULL DEFAULT 5,
-      is_up INTEGER NOT NULL DEFAULT 1,
-      last_checked_at INTEGER,
-      created_at INTEGER NOT NULL DEFAULT (unixepoch())
-    );
+      is_up BOOLEAN NOT NULL DEFAULT TRUE,
+      last_checked_at BIGINT,
+      created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
+    )
+  `);
 
+  await sql(`
     CREATE TABLE IF NOT EXISTS checks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      monitor_id TEXT NOT NULL,
-      is_up INTEGER NOT NULL,
+      id SERIAL PRIMARY KEY,
+      monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+      is_up BOOLEAN NOT NULL,
       response_time_ms INTEGER,
       status_code INTEGER,
-      checked_at INTEGER NOT NULL DEFAULT (unixepoch()),
-      FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
-    );
+      checked_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT)
+    )
+  `);
 
+  await sql(`
     CREATE TABLE IF NOT EXISTS incidents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      monitor_id TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      resolved_at INTEGER,
-      FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
-    );
+      id SERIAL PRIMARY KEY,
+      monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+      started_at BIGINT NOT NULL,
+      resolved_at BIGINT
+    )
+  `);
+
+  await sql(`
+    CREATE INDEX IF NOT EXISTS idx_checks_monitor_checked
+    ON checks (monitor_id, checked_at DESC)
   `);
 }
