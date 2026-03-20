@@ -154,7 +154,6 @@ function rowToCheck(row: any): Check {
   };
 }
 
-// Initialize schema on module load (for serverless, this runs on cold start)
-if (process.env.NODE_ENV !== 'production') {
-  initSchema().catch(console.error);
-}
+// Schema must be initialized before first use.
+// Run `node scripts/migrate.ts` or call initSchema() manually.
+// In production, schema is pre-created via migration.
