@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createMonitor, getAllMonitors, deleteMonitor } from '@/lib/monitor';
+import { createMonitor, getAllMonitors, deleteMonitor, updateMonitorAlertEnabled } from '@/lib/monitor';
 
 export async function GET() {
   try {
@@ -14,7 +14,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, url, email, interval_minutes } = body;
+    const { name, url, email, interval_minutes, alert_enabled } = body;
 
     if (!name || !url || !email) {
       return NextResponse.json({ error: 'name, url, and email are required' }, { status: 400 });
@@ -25,10 +25,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
     }
 
-    const monitor = await createMonitor({ name, url, email, interval_minutes });
+    const monitor = await createMonitor({ name, url, email, interval_minutes, alert_enabled });
     return NextResponse.json(monitor, { status: 201 });
   } catch (e) {
     console.error('Failed to create monitor:', e);
+    return NextResponse.json({ error: String(e) }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { id, alert_enabled } = body;
+
+    if (!id || alert_enabled === undefined) {
+      return NextResponse.json({ error: 'id and alert_enabled are required' }, { status: 400 });
+    }
+
+    await updateMonitorAlertEnabled(id, alert_enabled);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    console.error('Failed to update monitor alert enabled:', e);
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
 }

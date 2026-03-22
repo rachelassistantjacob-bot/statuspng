@@ -16,6 +16,7 @@ export async function initSchema() {
       url TEXT NOT NULL,
       email TEXT NOT NULL,
       interval_minutes INTEGER NOT NULL DEFAULT 5,
+      alert_enabled BOOLEAN NOT NULL DEFAULT true,
       is_up BOOLEAN NOT NULL DEFAULT true,
       last_checked_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -40,5 +41,18 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS checks_monitor_id_idx ON checks(monitor_id);
     CREATE INDEX IF NOT EXISTS checks_checked_at_idx ON checks(checked_at);
     CREATE INDEX IF NOT EXISTS incidents_monitor_id_idx ON incidents(monitor_id);
+
+    CREATE TABLE IF NOT EXISTS alerts (
+      id SERIAL PRIMARY KEY,
+      monitor_id TEXT NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+      type TEXT NOT NULL DEFAULT 'email',
+      event TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      success BOOLEAN NOT NULL DEFAULT true,
+      error_message TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS alerts_monitor_id_idx ON alerts(monitor_id);
   `;
 }

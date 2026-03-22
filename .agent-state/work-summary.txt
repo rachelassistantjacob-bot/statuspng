@@ -1,0 +1,137 @@
+# Work Summary — Email Alert System Implementation
+
+**Date:** 2026-03-22
+**Branch:** feature/email-alerts
+**Status:** ✅ COMPLETE — Build passed with 0 errors, 0 type errors
+
+## Completed Tasks
+
+### Task 1: DB Migration + Update initSchema
+✅ Created `scripts/migrate-email-alerts.ts` with SQL schema changes:
+- `ALTER TABLE monitors ADD COLUMN IF NOT EXISTS alert_enabled BOOLEAN NOT NULL DEFAULT true`
+- `CREATE TABLE IF NOT EXISTS alerts (...)` with all columns (id, monitor_id, type, event, recipient, sent_at, success, error_message)
+- Added indexes for alerts table
+
+✅ Updated `lib/db.ts` `initSchema()`:
+- Added `alert_enabled` column to monitors CREATE TABLE
+- Added full alerts CREATE TABLE statement
+
+### Task 2: Update lib/monitor.ts
+✅ Added `alert_enabled: boolean` to Monitor interface
+
+✅ Updated `rowToMonitor()` to include `alert_enabled: row.alert_enabled ?? true`
+
+✅ Updated `createMonitor()`:
+- Accepts optional `alert_enabled?: boolean` param (default true)
+- Includes `alert_enabled` in INSERT SQL
+
+✅ Added `updateMonitorAlertEnabled(id: string, alertEnabled: boolean)` function
+
+✅ Added Alert interface with `sent_at` as number (Unix seconds)
+
+✅ Added `rowToAlert()` mapper — converts TIMESTAMPTZ to Unix seconds via `Math.floor(new Date(x).getTime() / 1000)`
+
+✅ Added `recordAlert()` function for inserting alerts into database
+
+✅ Added `getAlertHistory(monitorId: string, limit?: number)` function
+
+### Task 3: Update API routes
+✅ Updated `POST` handler in `app/api/monitors/route.ts`:
+- Accepts `alert_enabled?: boolean` in body
+- Passes to `createMonitor()`
+
+✅ Added `PATCH` handler in `app/api/monitors/route.ts`:
+- Validates `id` and `alert_enabled` presence
+- Calls `updateMonitorAlertEnabled()`
+- Returns `{ ok: true }`
+
+### Task 4: Create lib/email.ts
+✅ Created `lib/email.ts` with shared email service:
+
+✅ `sendDownAlert()`: Red-toned HTML email, shows status code, response time, timestamp, monitor URL
+
+✅ `sendRecoveredAlert()`: Green-toned HTML email with recovery info
+
+✅ Both functions:
+- Use raw `fetch()` to Resend API (no resend package)
+- Check `process.env.RESEND_API_KEY`, return `{ ok: false, error: 'no RESEND_API_KEY' }` if not set
+- Default from: `process.env.FROM_EMAIL || 'onboarding@resend.dev'`
+
+### Task 5: Update app/api/check/route.ts
+✅ Imported `recordAlert` from `@/lib/monitor`
+
+✅ Imported `sendDownAlert`, `sendRecoveredAlert` from `@/lib/email`
+
+✅ Removed old inline `sendAlert()` function
+
+✅ Updated POST handler loop:
+- Checks `monitor.alert_enabled === true` before sending
+- Calls appropriate `lib/email.ts` function
+- Calls `recordAlert()` with event type, recipient, success
+
+✅ Updated GET handler (single-monitor check):
+- Same alert_enabled guard and recordAlert logic
+
+### Task 6: Create app/api/alerts/route.ts
+✅ Created `app/api/alerts/route.ts`
+
+✅ GET handler:
+- Accepts `monitor_id` query param
+- Calls `getAlertHistory(monitor_id, 10)`
+- Returns JSON array of alerts
+- Returns 400 if `monitor_id` missing
+
+### Task 7: Update app/dashboard/page.tsx
+✅ Updated local Monitor interface to include `alert_enabled: boolean`
+
+✅ Updated `handleAdd` form state to include `alert_enabled: true` by default
+
+✅ Added checkbox to "New Monitor" form for alert_enabled (default checked)
+
+✅ Added alert toggle button on each monitor card:
+- Shows 🔔 (alerts on) or 🚫 (alerts off)
+- Calls PATCH /api/monitors with `{ id, alert_enabled: !m.alert_enabled }`
+- Optimistic update then refetch
+
+✅ Added alert history section per monitor card:
+- "View Alerts" button per monitor
+- Fetches GET /api/alerts?monitor_id=X on click
+- Displays last 5 alerts: time, event (⬇️ down / ⬆️ recovered), success indicator
+
+✅ Added local Alert interface matching lib/monitor.ts (no imports from server module)
+
+### Task 8: Final build check
+✅ `npx tsc --noEmit` — passed with no errors
+
+✅ `npm run build` — passed, 0 errors, 0 warnings
+
+✅ All routes generated:
+- /api/alerts (ƒ)
+- /api/check (ƒ)
+- /api/monitors (ƒ)
+- /dashboard (○)
+- /status/[slug] (ƒ)
+
+## Known Limitations
+- No dedup for alerts — same transition fires multiple alerts if checked multiple times
+- This is documented in a comment in `app/api/check/route.ts`
+
+## Files Created
+- `scripts/migrate-email-alerts.ts` — DB migration script
+- `lib/email.ts` — Resend email service
+- `app/api/alerts/route.ts` — alerts history endpoint
+
+## Files Modified
+- `lib/db.ts` — added alerts table + alert_enabled column to initSchema()
+- `lib/monitor.ts` — updated Monitor interface, added Alert interface, added CRUD functions
+- `app/api/monitors/route.ts` — added PATCH handler, alert_enabled in POST
+- `app/api/check/route.ts` — use lib/email.ts, recordAlert, alert_enabled guard
+- `app/dashboard/page.tsx` — alert toggle, alert history UI
+
+## Migration Note
+Run `npx tsx scripts/migrate-email-alerts.ts` to apply schema changes to production database BEFORE deploying this code.
+
+## Verification
+- Build passes with 0 errors, 0 type errors
+- TypeScript compilation: ✅
+- Next.js production build: ✅

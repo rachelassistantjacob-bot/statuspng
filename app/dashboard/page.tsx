@@ -8,18 +8,32 @@ interface Monitor {
   url: string;
   email: string;
   interval_minutes: number;
+  alert_enabled: boolean;
   is_up: boolean;
   last_checked_at: number | null;
   created_at: number;
+}
+
+interface Alert {
+  id: number;
+  monitor_id: string;
+  type: string;
+  event: string;
+  recipient: string;
+  sent_at: number;
+  success: boolean;
+  error_message: string | null;
 }
 
 export default function DashboardPage() {
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', url: '', email: '' });
+  const [form, setForm] = useState({ name: '', url: '', email: '', alert_enabled: true });
   const [submitting, setSubmitting] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
+  const [alertHistory, setAlertHistory] = useState<Record<string, Alert[]>>({});
+  const [loadingAlerts, setLoadingAlerts] = useState<Set<string>>(new Set());
 
   async function fetchMonitors() {
     const res = await fetch('/api/monitors');
@@ -36,9 +50,9 @@ export default function DashboardPage() {
     await fetch('/api/monitors', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, alert_enabled: true }),
     });
-    setForm({ name: '', url: '', email: '' });
+    setForm({ name: '', url: '', email: '', alert_enabled: true });
     setShowForm(false);
     setSubmitting(false);
     fetchMonitors();
@@ -59,6 +73,43 @@ export default function DashboardPage() {
     await fetch(`/api/check?id=${id}&secret=${process.env.NEXT_PUBLIC_CRON_SECRET || 'dev-secret'}`);
     await fetchMonitors();
     setChecking(null);
+  }
+
+  async function toggleAlerts(monitor: Monitor) {
+    const newEnabled = !monitor.alert_enabled;
+    // Optimistic update
+    setMonitors(prev => prev.map(m => m.id === monitor.id ? { ...m, alert_enabled: newEnabled } : m));
+    try {
+      await fetch('/api/monitors', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: monitor.id, alert_enabled: newEnabled }),
+      });
+    } catch (e) {
+      console.error('Failed to update alert settings:', e);
+      // Revert on error
+      setMonitors(prev => prev.map(m => m.id === monitor.id ? { ...m, alert_enabled: monitor.alert_enabled } : m));
+    }
+  }
+
+  async function fetchAlertHistory(monitorId: string) {
+    if (loadingAlerts.has(monitorId) || alertHistory[monitorId]) return;
+    setLoadingAlerts(prev => new Set(prev).add(monitorId));
+    try {
+      const res = await fetch(`/api/alerts?monitor_id=${monitorId}`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setAlertHistory(prev => ({ ...prev, [monitorId]: data }));
+      }
+    } catch (e) {
+      console.error('Failed to fetch alert history:', e);
+    } finally {
+      setLoadingAlerts(prev => {
+        const next = new Set(prev);
+        next.delete(monitorId);
+        return next;
+      });
+    }
   }
 
   return (
@@ -113,6 +164,16 @@ export default function DashboardPage() {
                 required
                 className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500/50"
               />
+              <div className="md:col-span-3 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="alert_enabled"
+                  checked={form.alert_enabled}
+                  onChange={e => setForm(f => ({ ...f, alert_enabled: e.target.checked }))}
+                  className="w-4 h-4 rounded border-gray-600 text-emerald-500 focus:ring-emerald-500/50"
+                />
+                <label htmlFor="alert_enabled" className="text-sm text-gray-300">Enable email alerts</label>
+              </div>
               <div className="md:col-span-3 flex gap-3">
                 <button
                   type="submit"
@@ -156,6 +217,13 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => toggleAlerts(m)}
+                      title={m.alert_enabled ? "Disable alerts" : "Enable alerts"}
+                      className={`text-xl transition-colors ${m.alert_enabled ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-400'}`}
+                    >
+                      {m.alert_enabled ? '🔔' : '🔕'}
+                    </button>
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                       m.is_up === true ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
                     }`}>
@@ -191,6 +259,31 @@ export default function DashboardPage() {
                       <span>·</span>
                       <span>Last checked {new Date(m.last_checked_at * 1000).toLocaleString()}</span>
                     </>
+                  )}
+                </div>
+                {/* Alert History Section */}
+                <div className="mt-3 pt-3 border-t border-white/5">
+                  <button
+                    onClick={() => fetchAlertHistory(m.id)}
+                    disabled={loadingAlerts.has(m.id) || !!alertHistory[m.id]}
+                    className="text-xs text-gray-400 hover:text-emerald-400 disabled:opacity-50 transition-colors"
+                  >
+                    {loadingAlerts.has(m.id) ? 'Loading alerts...' : alertHistory[m.id] ? 'View more' : '+ View alerts'}
+                  </button>
+                  {alertHistory[m.id] && alertHistory[m.id].length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {alertHistory[m.id]!.slice(0, 5).map(alert => (
+                        <div key={alert.id} className="flex items-center gap-2 text-xs text-gray-500">
+                          <span className={alert.event === 'down' ? 'text-red-400' : 'text-emerald-400'}>
+                            {alert.event === 'down' ? '⬇️' : '⬆️'}
+                          </span>
+                          <span>{new Date(alert.sent_at * 1000).toLocaleString()}</span>
+                          <span className={alert.success ? 'text-emerald-600' : 'text-red-500'}>
+                            {alert.success ? '✓ sent' : '✗ failed'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
               </div>

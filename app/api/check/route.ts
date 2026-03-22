@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllMonitors, updateMonitorStatus, recordCheck, getMonitor } from '@/lib/monitor';
+import { getAllMonitors, updateMonitorStatus, recordCheck, recordAlert, getMonitor } from '@/lib/monitor';
+import { sendDownAlert, sendRecoveredAlert } from '@/lib/email';
 
 const CRON_SECRET = process.env.CRON_SECRET || 'dev-secret';
 
@@ -49,9 +50,13 @@ export async function POST(req: NextRequest) {
     await recordCheck(monitor.id, isUp, responseTimeMs, statusCode);
     await updateMonitorStatus(monitor.id, isUp);
 
-    // Send alert if status changed
-    if (wasUp !== isUp) {
-      await sendAlert(monitor.email, monitor.name, monitor.url, isUp);
+    // Send alert if status changed (only if alerts are enabled)
+    if (wasUp !== isUp && monitor.alert_enabled) {
+      const alertResult = isUp
+        ? await sendRecoveredAlert(monitor.email, monitor.name, monitor.url, statusCode, responseTimeMs)
+        : await sendDownAlert(monitor.email, monitor.name, monitor.url, statusCode, responseTimeMs);
+      // Record the alert in the database (success tracks whether email actually sent)
+      await recordAlert(monitor.id, isUp ? 'up' : 'down', monitor.email, alertResult.ok, alertResult.error);
     }
 
     results.push({ id: monitor.id, isUp, responseTimeMs, statusCode });
@@ -82,36 +87,14 @@ export async function GET(req: NextRequest) {
   await recordCheck(id, isUp, responseTimeMs, statusCode);
   await updateMonitorStatus(id, isUp);
 
-  if (wasUp !== isUp) {
-    await sendAlert(monitor.email, monitor.name, monitor.url, isUp);
+  // Send alert if status changed (only if alerts are enabled)
+  if (wasUp !== isUp && monitor.alert_enabled) {
+    const alertResult = isUp
+      ? await sendRecoveredAlert(monitor.email, monitor.name, monitor.url, statusCode, responseTimeMs)
+      : await sendDownAlert(monitor.email, monitor.name, monitor.url, statusCode, responseTimeMs);
+    // Record the alert in the database (success tracks whether email actually sent)
+    await recordAlert(id, isUp ? 'up' : 'down', monitor.email, alertResult.ok, alertResult.error);
   }
 
   return NextResponse.json({ id, isUp, responseTimeMs, statusCode });
-}
-
-async function sendAlert(email: string, name: string, url: string, isUp: boolean) {
-  // Log to console in dev; in prod wire up Resend or Nodemailer
-  console.log(`[ALERT] ${name} (${url}) is now ${isUp ? 'UP ✓' : 'DOWN ✗'} → ${email}`);
-
-  if (process.env.RESEND_API_KEY) {
-    try {
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: process.env.FROM_EMAIL || 'alerts@statusping.app',
-          to: email,
-          subject: isUp ? `✅ ${name} is back online` : `🔴 ${name} is down`,
-          html: isUp
-            ? `<p><strong>${name}</strong> is back online. <a href="${url}">${url}</a></p>`
-            : `<p><strong>${name}</strong> is down. <a href="${url}">${url}</a> is not responding.</p><p>We'll let you know when it recovers.</p>`,
-        }),
-      });
-    } catch (e) {
-      console.error('Failed to send alert email:', e);
-    }
-  }
 }

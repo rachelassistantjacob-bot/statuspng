@@ -7,6 +7,7 @@ export interface Monitor {
   url: string;
   email: string;
   interval_minutes: number;
+  alert_enabled: boolean;
   is_up: boolean;
   last_checked_at: number | null;
   created_at: number;
@@ -21,11 +22,23 @@ export interface Check {
   checked_at: number;
 }
 
-export async function createMonitor(data: { name: string; url: string; email: string; interval_minutes?: number }): Promise<Monitor> {
+export interface Alert {
+  id: number;
+  monitor_id: string;
+  type: string;
+  event: string;
+  recipient: string;
+  sent_at: number;
+  success: boolean;
+  error_message: string | null;
+}
+
+export async function createMonitor(data: { name: string; url: string; email: string; interval_minutes?: number; alert_enabled?: boolean }): Promise<Monitor> {
   const id = nanoid(10);
+  const alertEnabled = data.alert_enabled ?? true;
   await sql`
-    INSERT INTO monitors (id, name, url, email, interval_minutes)
-    VALUES (${id}, ${data.name}, ${data.url}, ${data.email}, ${data.interval_minutes ?? 5})
+    INSERT INTO monitors (id, name, url, email, interval_minutes, alert_enabled)
+    VALUES (${id}, ${data.name}, ${data.url}, ${data.email}, ${data.interval_minutes ?? 5}, ${alertEnabled})
   `;
   const monitor = await getMonitor(id);
   if (!monitor) throw new Error('Failed to create monitor');
@@ -48,6 +61,14 @@ export async function updateMonitorStatus(id: string, isUp: boolean) {
   await sql`
     UPDATE monitors 
     SET is_up = ${isUp}, last_checked_at = NOW() 
+    WHERE id = ${id}
+  `;
+}
+
+export async function updateMonitorAlertEnabled(id: string, alertEnabled: boolean) {
+  await sql`
+    UPDATE monitors 
+    SET alert_enabled = ${alertEnabled}
     WHERE id = ${id}
   `;
 }
@@ -137,6 +158,7 @@ function rowToMonitor(row: any): Monitor {
     url: row.url,
     email: row.email,
     interval_minutes: row.interval_minutes,
+    alert_enabled: row.alert_enabled ?? true,
     is_up: row.is_up,
     last_checked_at: row.last_checked_at ? Math.floor(new Date(row.last_checked_at).getTime() / 1000) : null,
     created_at: row.created_at ? Math.floor(new Date(row.created_at).getTime() / 1000) : 0,
@@ -151,6 +173,36 @@ function rowToCheck(row: any): Check {
     response_time_ms: row.response_time_ms,
     status_code: row.status_code,
     checked_at: row.checked_at ? Math.floor(new Date(row.checked_at).getTime() / 1000) : 0,
+  };
+}
+
+export async function recordAlert(monitorId: string, event: 'down' | 'up', recipient: string, success: boolean, errorMessage?: string) {
+  await sql`
+    INSERT INTO alerts (monitor_id, type, event, recipient, success, error_message)
+    VALUES (${monitorId}, 'email', ${event}, ${recipient}, ${success}, ${errorMessage ?? null})
+  `;
+}
+
+export async function getAlertHistory(monitorId: string, limit = 10): Promise<Alert[]> {
+  const rows = await sql`
+    SELECT * FROM alerts
+    WHERE monitor_id = ${monitorId}
+    ORDER BY sent_at DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(rowToAlert);
+}
+
+function rowToAlert(row: any): Alert {
+  return {
+    id: row.id,
+    monitor_id: row.monitor_id,
+    type: row.type,
+    event: row.event,
+    recipient: row.recipient,
+    sent_at: row.sent_at ? Math.floor(new Date(row.sent_at).getTime() / 1000) : 0,
+    success: row.success,
+    error_message: row.error_message,
   };
 }
 

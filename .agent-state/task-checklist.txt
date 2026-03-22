@@ -1,0 +1,11 @@
+# Task Checklist
+
+- [x] Task 1a: Create scripts/migrate-email-alerts.ts
+- [x] Task 1b: Update initSchema() in lib/db.ts
+- [x] Task 2: Update lib/monitor.ts (Monitor interface, alert CRUD)
+- [x] Task 3: Update app/api/monitors/route.ts (PATCH handler, alert_enabled in POST)
+- [x] Task 4: Create lib/email.ts (Resend email service)
+- [x] Task 5: Update app/api/check/route.ts (use lib/email.ts, record alerts, alert_enabled check)
+- [x] Task 6: Create app/api/alerts/route.ts
+- [x] Task 7: Update app/dashboard/page.tsx (alert toggle, alert history UI)
+- [x] Task 8: Run build check
