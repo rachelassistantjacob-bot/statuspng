@@ -70,7 +70,11 @@ export default function DashboardPage() {
 
   async function handleCheck(id: string) {
     setChecking(id);
-    await fetch(`/api/check?id=${id}&secret=${process.env.NEXT_PUBLIC_CRON_SECRET || 'dev-secret'}`);
+    await fetch('/api/check-manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
     await fetchMonitors();
     setChecking(null);
   }

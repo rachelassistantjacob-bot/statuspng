@@ -1,5 +1,6 @@
 import { getMonitor, getUptimeDots, getUptimePercent, getAvgResponseTime, getRecentChecks } from '@/lib/monitor';
 import { notFound } from 'next/navigation';
+import { ClientDate } from '@/app/components/ClientDate';
 
 export const dynamic = 'force-dynamic';
 
@@ -105,7 +106,7 @@ export default async function StatusPage({ params }: { params: Promise<{ slug: s
                     {check.response_time_ms !== null && (
                       <span>{check.response_time_ms}ms</span>
                     )}
-                    <span>{new Date(check.checked_at * 1000).toLocaleString()}</span>
+                    <ClientDate unixSeconds={check.checked_at} />
                   </div>
                 </div>
               ))}
